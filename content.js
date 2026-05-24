@@ -1,8 +1,9 @@
 // TND Price Converter content script.
-// It scans text nodes, finds visible prices, and replaces only the price text with a marked span.
+// Scans safe text nodes, detects foreign-currency prices, and marks each conversion.
 
 const TND_CONVERTER_ATTR = "data-tnd-price-converter";
 const TND_STYLE_ID = "tnd-price-converter-style";
+const APPROX_SIGN = "\u2248";
 
 const BLOCKED_TAGS = new Set([
   "INPUT",
@@ -16,67 +17,84 @@ const BLOCKED_TAGS = new Set([
   "OPTION"
 ]);
 
-// Symbols and ISO codes. Ambiguous "$" is treated as USD.
-const CURRENCY_ALIASES = {
-  USD: ["USD", "US$", "$"],
-  EUR: ["EUR", "€"],
-  GBP: ["GBP", "£"],
-  JPY: ["JPY", "JP¥", "¥"],
-  AUD: ["AUD", "A$", "AU$"],
-  CAD: ["CAD", "C$", "CA$"],
-  CHF: ["CHF"],
-  CNY: ["CNY", "CN¥", "RMB"],
-  EGP: ["EGP", "E£"],
-  AED: ["AED"],
-  SAR: ["SAR"],
-  TRY: ["TRY", "TL", "₺"],
-  MAD: ["MAD"],
-  DZD: ["DZD"],
-  NZD: ["NZD", "NZ$"],
-  SGD: ["SGD", "S$"],
-  HKD: ["HKD", "HK$"],
-  INR: ["INR", "₹"],
-  KRW: ["KRW", "₩"],
-  BRL: ["BRL", "R$"],
-  MXN: ["MXN", "MX$"],
-  ZAR: ["ZAR"],
-  SEK: ["SEK"],
-  NOK: ["NOK"],
-  DKK: ["DKK"],
-  PLN: ["PLN"],
-  QAR: ["QAR"],
-  KWD: ["KWD"],
-  BHD: ["BHD"],
-  OMR: ["OMR"],
-  JOD: ["JOD"],
-  LYD: ["LYD"]
-};
+const BLOCKED_SELECTOR = [...BLOCKED_TAGS].map((tagName) => tagName.toLowerCase()).join(",");
+
+// Ambiguous "$" is treated as USD. Two-letter word aliases are intentionally
+// avoided because they create too many false positives in normal page text.
+const CURRENCY_DEFINITIONS = [
+  { code: "USD", codeTokens: ["USD"], symbolTokens: ["US$", "$"] },
+  { code: "EUR", codeTokens: ["EUR"], symbolTokens: ["\u20ac"] },
+  { code: "GBP", codeTokens: ["GBP"], symbolTokens: ["\u00a3"] },
+  { code: "JPY", codeTokens: ["JPY"], symbolTokens: ["JP\u00a5", "\u00a5"] },
+  { code: "AUD", codeTokens: ["AUD"], symbolTokens: ["A$", "AU$"] },
+  { code: "CAD", codeTokens: ["CAD"], symbolTokens: ["C$", "CA$"] },
+  { code: "CHF", codeTokens: ["CHF"], symbolTokens: [] },
+  { code: "CNY", codeTokens: ["CNY", "RMB"], symbolTokens: ["CN\u00a5"] },
+  { code: "EGP", codeTokens: ["EGP"], symbolTokens: ["E\u00a3"] },
+  { code: "AED", codeTokens: ["AED"], symbolTokens: [] },
+  { code: "SAR", codeTokens: ["SAR"], symbolTokens: [] },
+  { code: "TRY", codeTokens: ["TRY"], symbolTokens: ["\u20ba"] },
+  { code: "MAD", codeTokens: ["MAD"], symbolTokens: [] },
+  { code: "DZD", codeTokens: ["DZD"], symbolTokens: [] },
+  { code: "NZD", codeTokens: ["NZD"], symbolTokens: ["NZ$"] },
+  { code: "SGD", codeTokens: ["SGD"], symbolTokens: ["S$"] },
+  { code: "HKD", codeTokens: ["HKD"], symbolTokens: ["HK$"] },
+  { code: "INR", codeTokens: ["INR"], symbolTokens: ["\u20b9"] },
+  { code: "KRW", codeTokens: ["KRW"], symbolTokens: ["\u20a9"] },
+  { code: "BRL", codeTokens: ["BRL"], symbolTokens: ["R$"] },
+  { code: "MXN", codeTokens: ["MXN"], symbolTokens: ["MX$"] },
+  { code: "ZAR", codeTokens: ["ZAR"], symbolTokens: [] },
+  { code: "SEK", codeTokens: ["SEK"], symbolTokens: [] },
+  { code: "NOK", codeTokens: ["NOK"], symbolTokens: [] },
+  { code: "DKK", codeTokens: ["DKK"], symbolTokens: [] },
+  { code: "PLN", codeTokens: ["PLN"], symbolTokens: [] },
+  { code: "QAR", codeTokens: ["QAR"], symbolTokens: [] },
+  { code: "KWD", codeTokens: ["KWD"], symbolTokens: [] },
+  { code: "BHD", codeTokens: ["BHD"], symbolTokens: [] },
+  { code: "OMR", codeTokens: ["OMR"], symbolTokens: [] },
+  { code: "JOD", codeTokens: ["JOD"], symbolTokens: [] },
+  { code: "LYD", codeTokens: ["LYD"], symbolTokens: [] }
+];
 
 const TOKEN_TO_CURRENCY = new Map();
+const CODE_TOKENS = [];
+const SYMBOL_TOKENS = [];
 
-for (const [currency, aliases] of Object.entries(CURRENCY_ALIASES)) {
-  for (const alias of aliases) {
-    TOKEN_TO_CURRENCY.set(normalizeCurrencyToken(alias), currency);
+for (const definition of CURRENCY_DEFINITIONS) {
+  for (const token of definition.codeTokens) {
+    TOKEN_TO_CURRENCY.set(normalizeCurrencyToken(token), definition.code);
+    CODE_TOKENS.push(token);
+  }
+
+  for (const token of definition.symbolTokens) {
+    TOKEN_TO_CURRENCY.set(normalizeCurrencyToken(token), definition.code);
+    SYMBOL_TOKENS.push(token);
   }
 }
 
-const CURRENCY_TOKENS = [...TOKEN_TO_CURRENCY.keys()]
-  .sort((a, b) => b.length - a.length)
-  .map(escapeRegExp)
-  .join("|");
+const CODE_TOKEN_PATTERN = makeTokenPattern(CODE_TOKENS);
+const SYMBOL_TOKEN_PATTERN = makeTokenPattern(SYMBOL_TOKENS);
+const ALL_TOKEN_PATTERN = makeTokenPattern([...CODE_TOKENS, ...SYMBOL_TOKENS]);
 
 const AMOUNT_PATTERN =
-  String.raw`(?:\d{1,3}(?:[\s\u00a0\u202f,'’]\d{3})+(?:[.,]\d{1,4})?|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,4})?|\d+(?:[.,]\d{1,4})?)`;
+  String.raw`(?:\d{1,3}(?:[\s\u00a0\u202f,'\u2019]\d{3})+(?:[.,]\d{1,4})?|\d{1,3}(?:,\d{3})+(?:\.\d{1,4})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,4})?|\d+(?:[.,]\d{1,4})?)`;
 
+// Codes require whitespace ("USD 120"), while symbols may touch the number ("$19.99").
 const PRICE_PATTERN = new RegExp(
-  String.raw`(?<![A-Za-z0-9_])(?:` +
-    String.raw`(?<prefixCurrency>${CURRENCY_TOKENS})\s*(?<prefixAmount>${AMOUNT_PATTERN})` +
-    String.raw`|(?<suffixAmount>${AMOUNT_PATTERN})\s*(?<suffixCurrency>${CURRENCY_TOKENS})` +
-    String.raw`)(?![A-Za-z0-9_])`,
+  String.raw`(?<![\p{L}\p{N}_])(?:` +
+    String.raw`(?<prefixSymbol>${SYMBOL_TOKEN_PATTERN})\s*(?<prefixSymbolAmount>${AMOUNT_PATTERN})` +
+    String.raw`|(?<prefixCode>${CODE_TOKEN_PATTERN})\s+(?<prefixCodeAmount>${AMOUNT_PATTERN})` +
+    String.raw`|(?<suffixSymbolAmount>${AMOUNT_PATTERN})\s*(?<suffixSymbol>${SYMBOL_TOKEN_PATTERN})` +
+    String.raw`|(?<suffixCodeAmount>${AMOUNT_PATTERN})\s+(?<suffixCode>${CODE_TOKEN_PATTERN})` +
+    String.raw`)(?![\p{L}\p{N}_])`,
   "giu"
 );
 
-const HAS_CURRENCY_PATTERN = new RegExp(CURRENCY_TOKENS, "iu");
+const HAS_CURRENCY_PATTERN = new RegExp(ALL_TOKEN_PATTERN, "iu");
+const EXISTING_TND_SUFFIX_PATTERN = new RegExp(
+  String.raw`^\s*\(\s*(?:\u2248|~|approx\.?|about)\s*[\d\s.,]+TND\s*\)`,
+  "i"
+);
 
 let extensionState = {
   settings: {
@@ -97,6 +115,14 @@ function normalizeCurrencyToken(token) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function makeTokenPattern(tokens) {
+  return tokens
+    .map(normalizeCurrencyToken)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join("|");
 }
 
 function injectContentStyles() {
@@ -138,23 +164,20 @@ function requestState() {
 }
 
 function shouldSkipElement(element) {
-  if (!element) {
+  if (!element || element.nodeType !== Node.ELEMENT_NODE) {
     return true;
   }
 
-  if (element.nodeType !== Node.ELEMENT_NODE) {
-    return false;
-  }
-
-  if (BLOCKED_TAGS.has(element.tagName)) {
+  if (element.closest(`[${TND_CONVERTER_ATTR}]`)) {
     return true;
   }
 
-  if (element.isContentEditable) {
+  if (element.closest(BLOCKED_SELECTOR)) {
     return true;
   }
 
-  return Boolean(element.closest(`[${TND_CONVERTER_ATTR}]`));
+  // Skip editable regions, including descendants of contenteditable containers.
+  return element.isContentEditable || Boolean(element.closest("[contenteditable]"));
 }
 
 function shouldScanTextNode(node) {
@@ -172,7 +195,7 @@ function shouldScanTextNode(node) {
 
 function parseLocalizedNumber(rawAmount) {
   const compact = rawAmount
-    .replace(/[\s\u00a0\u202f'’]/g, "")
+    .replace(/[\s\u00a0\u202f'\u2019]/g, "")
     .trim();
 
   const lastComma = compact.lastIndexOf(",");
@@ -193,7 +216,7 @@ function parseLocalizedNumber(rawAmount) {
   }
 
   const amount = Number(normalized);
-  return Number.isFinite(amount) ? amount : null;
+  return isLikelyPriceAmount(amount) ? amount : null;
 }
 
 function normalizeSingleSeparatorNumber(value, separator) {
@@ -203,7 +226,11 @@ function normalizeSingleSeparatorNumber(value, separator) {
     const decimals = parts[1];
 
     // "19,99" is decimal, while "1,999" is more likely a thousands group.
-    if (decimals.length > 0 && decimals.length <= 2) {
+    if (decimals.length === 3 && parts[0].length <= 3) {
+      return parts.join("");
+    }
+
+    if (decimals.length > 0 && decimals.length <= 4) {
       return `${parts[0]}.${decimals}`;
     }
   }
@@ -211,20 +238,35 @@ function normalizeSingleSeparatorNumber(value, separator) {
   return parts.join("");
 }
 
+function isLikelyPriceAmount(amount) {
+  return Number.isFinite(amount) && amount > 0 && amount < 1_000_000_000;
+}
+
 function getCurrencyFromMatch(match) {
-  const token = match.groups.prefixCurrency || match.groups.suffixCurrency;
+  const token =
+    match.groups.prefixSymbol ||
+    match.groups.prefixCode ||
+    match.groups.suffixSymbol ||
+    match.groups.suffixCode;
+
   return TOKEN_TO_CURRENCY.get(normalizeCurrencyToken(token));
 }
 
 function getAmountFromMatch(match) {
-  return parseLocalizedNumber(match.groups.prefixAmount || match.groups.suffixAmount);
+  const rawAmount =
+    match.groups.prefixSymbolAmount ||
+    match.groups.prefixCodeAmount ||
+    match.groups.suffixSymbolAmount ||
+    match.groups.suffixCodeAmount;
+
+  return parseLocalizedNumber(rawAmount);
+}
+
+function hasExistingTndSuffix(text, matchEndIndex) {
+  return EXISTING_TND_SUFFIX_PATTERN.test(text.slice(matchEndIndex, matchEndIndex + 64));
 }
 
 function convertToTnd(amount, currency) {
-  if (currency === "TND") {
-    return amount;
-  }
-
   const rates = extensionState.rateCache && extensionState.rateCache.rates;
   const currencyRate = rates && rates[currency];
 
@@ -262,15 +304,17 @@ function makePriceSpan(originalText, amount, currency, convertedAmount) {
   span.dataset.currency = currency;
   span.dataset.amount = String(amount);
   span.title = `${originalText} converted to ${convertedText} using cached exchange rates.`;
-  span.textContent = replaceMode ? convertedText : `${originalText} (≈ ${convertedText})`;
 
-  if (!replaceMode) {
-    const conversionStart = span.textContent.indexOf("(≈");
-    if (conversionStart !== -1) {
-      span.dataset.convertedText = span.textContent.slice(conversionStart);
-    }
+  if (replaceMode) {
+    span.textContent = convertedText;
+    return span;
   }
 
+  const conversion = document.createElement("span");
+  conversion.className = "tnd-price-converter__conversion";
+  conversion.textContent = ` (${APPROX_SIGN} ${convertedText})`;
+
+  span.append(document.createTextNode(originalText), conversion);
   return span;
 }
 
@@ -288,6 +332,12 @@ function processTextNode(node) {
 
   for (const match of text.matchAll(PRICE_PATTERN)) {
     const originalText = match[0];
+    const matchEndIndex = match.index + originalText.length;
+
+    if (hasExistingTndSuffix(text, matchEndIndex)) {
+      continue;
+    }
+
     const currency = getCurrencyFromMatch(match);
     const amount = getAmountFromMatch(match);
 
@@ -305,7 +355,7 @@ function processTextNode(node) {
     }
 
     fragment.appendChild(makePriceSpan(originalText, amount, currency, convertedAmount));
-    lastIndex = match.index + originalText.length;
+    lastIndex = matchEndIndex;
     changed = true;
   }
 
@@ -348,6 +398,7 @@ function scanRoot(root) {
     }
   });
 
+  // Collect first because replacing nodes while walking can confuse TreeWalker.
   const nodes = [];
   while (walker.nextNode()) {
     nodes.push(walker.currentNode);
@@ -386,7 +437,9 @@ function restoreOriginalPrices() {
     node.replaceWith(document.createTextNode(originalText));
   }
 
-  document.body && document.body.normalize();
+  if (document.body) {
+    document.body.normalize();
+  }
 }
 
 function rebuildPage() {
