@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "TND Price Converter",
+  "version": "1.0.0",
+  "description": "Detects prices on websites and converts them to Tunisian dinar (TND).",
+  "permissions": ["alarms", "storage"],
+  "host_permissions": ["https://open.er-api.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TND Price Converter"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

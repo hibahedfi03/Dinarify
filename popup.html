@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TND Price Converter</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="popup">
+      <header class="popup__header">
+        <div class="brand">
+          <div class="brand__mark">TND</div>
+          <div>
+            <h1>TND Price Converter</h1>
+            <p id="rateSummary">Loading rates...</p>
+          </div>
+        </div>
+
+        <label class="switch" title="Enable or disable conversion on web pages">
+          <input id="enabled" type="checkbox" checked>
+          <span class="switch__track">
+            <span class="switch__thumb"></span>
+          </span>
+        </label>
+      </header>
+
+      <section class="panel" aria-labelledby="displayLabel">
+        <h2 id="displayLabel">Display</h2>
+        <div class="segmented" role="radiogroup" aria-label="Display mode">
+          <label>
+            <input type="radio" name="displayMode" value="append" checked>
+            <span>Append</span>
+          </label>
+          <label>
+            <input type="radio" name="displayMode" value="replace">
+            <span>Replace</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="roundingLabel">
+        <h2 id="roundingLabel">Rounding</h2>
+        <select id="rounding" aria-label="Rounding">
+          <option value="exact">Exact</option>
+          <option value="1" selected>1 decimal</option>
+          <option value="2">2 decimals</option>
+        </select>
+      </section>
+
+      <button id="refreshRates" class="button" type="button">
+        <span aria-hidden="true">↻</span>
+        Refresh rates
+      </button>
+
+      <p id="statusMessage" class="status" role="status"></p>
+
+      <footer class="footer">
+        Rates by
+        <a href="https://www.exchangerate-api.com" target="_blank" rel="noreferrer">Exchange Rate API</a>
+      </footer>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
