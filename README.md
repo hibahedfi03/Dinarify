@@ -49,7 +49,7 @@ Clone or download this project, then load it as an unpacked Chrome extension.
 
 ```bash
 git clone <your-repo-url>
-cd tnd-convert
+cd Dinarify
 ```
 
 No build step is required.
