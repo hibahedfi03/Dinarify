@@ -1,5 +1,5 @@
-// TND Price Converter background service worker.
-// It owns settings, daily exchange-rate refreshes, and the cached rate payload.
+// Dinarify background service worker.
+// It owns settings, exchange-rate caching, daily refreshes, and popup messages.
 
 const TARGET_CURRENCY = "TND";
 const SETTINGS_KEY = "settings";
@@ -40,15 +40,55 @@ async function getSettings() {
   };
 }
 
+function hasUsableRates(rateCache) {
+  return Boolean(
+    rateCache &&
+      rateCache.rates &&
+      typeof rateCache.rates === "object" &&
+      Object.keys(rateCache.rates).length > 0
+  );
+}
+
+function normalizeRateCache(rateCache) {
+  if (!hasUsableRates(rateCache)) {
+    return null;
+  }
+
+  const lastUpdated = rateCache.lastUpdated || rateCache.fetchedAt || null;
+
+  return {
+    ...rateCache,
+    base: rateCache.base || TARGET_CURRENCY,
+    fetchedAt: rateCache.fetchedAt || lastUpdated,
+    lastUpdated
+  };
+}
+
 function isRateCacheFresh(rateCache) {
-  if (!rateCache || !rateCache.rates || !rateCache.fetchedAt) {
+  const normalized = normalizeRateCache(rateCache);
+  const timestamp = normalized && (normalized.lastUpdated || normalized.fetchedAt);
+
+  if (!timestamp) {
     return false;
   }
 
-  return Date.now() - rateCache.fetchedAt < ONE_DAY_MS;
+  return Date.now() - timestamp < ONE_DAY_MS;
 }
 
-async function fetchRates() {
+function makeRateError(message, error) {
+  return {
+    message,
+    detail: error && error.message ? error.message : null,
+    at: Date.now()
+  };
+}
+
+async function getCachedRates() {
+  const stored = await storageGet(RATE_CACHE_KEY);
+  return normalizeRateCache(stored[RATE_CACHE_KEY] || null);
+}
+
+async function fetchFreshRates() {
   const response = await fetch(RATE_API_URL, { cache: "no-store" });
 
   if (!response.ok) {
@@ -61,24 +101,58 @@ async function fetchRates() {
     throw new Error("Exchange-rate API returned an unexpected response");
   }
 
-  const rateCache = {
+  const now = Date.now();
+
+  return {
     base: TARGET_CURRENCY,
     rates: data.rates,
     provider: data.provider || "ExchangeRate-API",
     documentation: data.documentation || "https://www.exchangerate-api.com/docs/free",
     termsOfUse: data.terms_of_use || "https://www.exchangerate-api.com/terms",
     sourceUrl: RATE_API_URL,
-    fetchedAt: Date.now(),
+    fetchedAt: now,
+    lastUpdated: now,
     lastUpdateUtc: data.time_last_update_utc || null,
     nextUpdateUtc: data.time_next_update_utc || null
   };
+}
 
+async function saveFreshRates(rateCache) {
   await storageSet({
     [RATE_CACHE_KEY]: rateCache,
     [RATE_ERROR_KEY]: null
   });
+}
 
-  return rateCache;
+async function saveRateError(rateError) {
+  await storageSet({ [RATE_ERROR_KEY]: rateError });
+}
+
+async function refreshRatesWithFallback() {
+  const cachedRates = await getCachedRates();
+
+  try {
+    const freshRates = await fetchFreshRates();
+    await saveFreshRates(freshRates);
+    return {
+      rateCache: freshRates,
+      rateError: null,
+      fromCache: false
+    };
+  } catch (error) {
+    // If the network/API fails, keep using the last saved rates when available.
+    const rateError = cachedRates
+      ? makeRateError("Could not refresh rates. Using cached rates.", error)
+      : makeRateError("Exchange rates are unavailable and no cached rates exist.", error);
+
+    await saveRateError(rateError);
+
+    return {
+      rateCache: cachedRates,
+      rateError,
+      fromCache: Boolean(cachedRates)
+    };
+  }
 }
 
 async function getState({ refreshIfStale = true } = {}) {
@@ -88,21 +162,13 @@ async function getState({ refreshIfStale = true } = {}) {
     ...(stored[SETTINGS_KEY] || {})
   };
 
-  let rateCache = stored[RATE_CACHE_KEY] || null;
+  let rateCache = normalizeRateCache(stored[RATE_CACHE_KEY] || null);
   let rateError = stored[RATE_ERROR_KEY] || null;
 
   if (refreshIfStale && !isRateCacheFresh(rateCache)) {
-    try {
-      rateCache = await fetchRates();
-      rateError = null;
-    } catch (error) {
-      // Keep stale rates if they exist, but expose the error to the popup.
-      rateError = {
-        message: error.message,
-        at: Date.now()
-      };
-      await storageSet({ [RATE_ERROR_KEY]: rateError });
-    }
+    const refreshResult = await refreshRatesWithFallback();
+    rateCache = refreshResult.rateCache;
+    rateError = refreshResult.rateError;
   }
 
   return { settings, rateCache, rateError };
@@ -112,41 +178,26 @@ async function initializeExtension() {
   const settings = await getSettings();
   await storageSet({ [SETTINGS_KEY]: settings });
   createDailyAlarm();
-
-  try {
-    await fetchRates();
-  } catch (error) {
-    await storageSet({
-      [RATE_ERROR_KEY]: {
-        message: error.message,
-        at: Date.now()
-      }
-    });
-  }
+  await refreshRatesWithFallback();
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   initializeExtension().catch((error) => {
-    console.warn("TND Price Converter setup failed:", error);
+    console.warn("Dinarify setup failed:", error);
   });
 });
 
 chrome.runtime.onStartup.addListener(() => {
   createDailyAlarm();
   getState({ refreshIfStale: true }).catch((error) => {
-    console.warn("TND Price Converter startup refresh failed:", error);
+    console.warn("Dinarify startup refresh failed:", error);
   });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === DAILY_ALARM_NAME) {
-    fetchRates().catch((error) => {
-      storageSet({
-        [RATE_ERROR_KEY]: {
-          message: error.message,
-          at: Date.now()
-        }
-      });
+    refreshRatesWithFallback().catch((error) => {
+      console.warn("Dinarify scheduled refresh failed:", error);
     });
   }
 });
@@ -176,7 +227,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === "REFRESH_RATES") {
-      sendResponse({ ok: true, rateCache: await fetchRates() });
+      const refreshResult = await refreshRatesWithFallback();
+
+      if (!refreshResult.rateCache) {
+        sendResponse({
+          ok: false,
+          error: refreshResult.rateError.message,
+          rateError: refreshResult.rateError
+        });
+        return;
+      }
+
+      sendResponse({ ok: true, ...refreshResult });
       return;
     }
 
