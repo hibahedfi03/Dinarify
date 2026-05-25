@@ -3,55 +3,91 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>TND Price Converter</title>
+    <title>Dinarify</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <main class="popup">
-      <header class="popup__header">
+      <header class="header">
         <div class="brand">
-          <div class="brand__mark">TND</div>
-          <div>
-            <h1>TND Price Converter</h1>
-            <p id="rateSummary">Loading rates...</p>
-          </div>
+          <h1 class="sr-only">Dinarify</h1>
+          <img class="brand__logo" src="assets/brand/dinarify-logo.png" alt="Dinarify">
+          <p>Convert detected prices to Tunisian dinar.</p>
+        </div>
+      </header>
+
+      <section class="toggle-panel" aria-labelledby="enabledLabel">
+        <div>
+          <h2 id="enabledLabel">Extension status</h2>
+          <p id="enabledHint">Conversions are enabled on visited pages.</p>
         </div>
 
         <label class="switch" title="Enable or disable conversion on web pages">
+          <span id="enabledState" class="switch__label">Enabled</span>
           <input id="enabled" type="checkbox" checked>
           <span class="switch__track">
             <span class="switch__thumb"></span>
           </span>
         </label>
-      </header>
+      </section>
+
+      <section class="rate-card" aria-labelledby="rateLabel">
+        <div class="rate-card__top">
+          <h2 id="rateLabel">Exchange rates</h2>
+          <span id="rateStatus" class="pill">Loading</span>
+        </div>
+        <p id="rateSummary" class="rate-card__summary">Loading rates...</p>
+        <p id="rateUpdated" class="rate-card__meta">Last updated: checking...</p>
+      </section>
 
       <section class="panel" aria-labelledby="displayLabel">
-        <h2 id="displayLabel">Display</h2>
-        <div class="segmented" role="radiogroup" aria-label="Display mode">
+        <h2 id="displayLabel">Display mode</h2>
+        <div class="segmented segmented--two" role="radiogroup" aria-label="Display mode">
           <label>
             <input type="radio" name="displayMode" value="append" checked>
-            <span>Append</span>
+            <span>
+              <strong>Append</strong>
+              <small>$19.99 + TND</small>
+            </span>
           </label>
           <label>
             <input type="radio" name="displayMode" value="replace">
-            <span>Replace</span>
+            <span>
+              <strong>Replace</strong>
+              <small>TND only</small>
+            </span>
           </label>
         </div>
       </section>
 
       <section class="panel" aria-labelledby="roundingLabel">
         <h2 id="roundingLabel">Rounding</h2>
-        <select id="rounding" aria-label="Rounding">
-          <option value="exact">Exact</option>
-          <option value="1" selected>1 decimal</option>
-          <option value="2">2 decimals</option>
-        </select>
+        <div class="segmented segmented--three" role="radiogroup" aria-label="Rounding">
+          <label>
+            <input type="radio" name="rounding" value="exact">
+            <span>
+              <strong>Exact</strong>
+              <small>Up to 4 decimals</small>
+            </span>
+          </label>
+          <label>
+            <input type="radio" name="rounding" value="1" checked>
+            <span>
+              <strong>1 decimal</strong>
+              <small>61.2 TND</small>
+            </span>
+          </label>
+          <label>
+            <input type="radio" name="rounding" value="2">
+            <span>
+              <strong>2 decimals</strong>
+              <small>61.24 TND</small>
+            </span>
+          </label>
+        </div>
       </section>
 
-      <button id="refreshRates" class="button" type="button">
-        <span aria-hidden="true">↻</span>
-        Refresh rates
-      </button>
+      <button id="refreshRates" class="button" type="button">Refresh rates</button>
 
       <p id="statusMessage" class="status" role="status"></p>
 
