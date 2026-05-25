@@ -1,4 +1,4 @@
-// TND Price Converter content script.
+// Dinarify content script.
 // Scans safe text nodes, detects foreign-currency prices, and marks each conversion.
 
 const TND_CONVERTER_ATTR = "data-tnd-price-converter";

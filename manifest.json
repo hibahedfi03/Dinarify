@@ -1,16 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "TND Price Converter",
+  "name": "Dinarify",
   "version": "1.0.0",
   "description": "Detects prices on websites and converts them to Tunisian dinar (TND).",
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
   "permissions": ["alarms", "storage"],
   "host_permissions": ["https://open.er-api.com/*"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "32": "assets/icons/icon32.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    },
     "default_popup": "popup.html",
-    "default_title": "TND Price Converter"
+    "default_title": "Dinarify"
   },
   "content_scripts": [
     {
